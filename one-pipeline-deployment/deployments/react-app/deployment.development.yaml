@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: react-app
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: react-app
+  replicas: 1
+  strategy:
+    rollingUpdate: 
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template: 
+    metadata:
+      labels:
+        app: react-app
+    spec:
+      terminationGracePeriodSeconds: 30
+      dnsConfig:  
+        options:  
+        - name: single-request-reopen
+      containers:
+      - name: react-app
+        image: #{ACRLoginServer}#:#{ImageName}#
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+          name: default-port 
+        resources:
+          requests: 
+            memory: "1024Mi"
+            cpu: "200m"
+          limits:
+            memory: "2048Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: react-app-service
+  namespace: default
+  labels:
+    app: react-app
+spec:
+  type: ClusterIP
+  selector:
+    app: react-app
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP

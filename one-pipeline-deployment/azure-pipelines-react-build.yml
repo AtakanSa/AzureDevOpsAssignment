@@ -1,0 +1,158 @@
+name: $(BuildID)
+
+trigger:
+  branches:
+    include:
+    - 'feature/*'
+    - 'fix/*'
+    - 'hotfix/*'
+    - 'master'
+    - 'release/*'
+    - 'initial/*'
+  paths:
+    include:
+      - 'react-and-spring-data-rest/Dockerfile'
+      - 'react-and-spring-data-rest/package.json'
+      - 'react-and-spring-data-rest/src/main/js/*'
+      - 'react-and-spring-data-rest/src/main/resources/*'
+      - 'azure-pipelines-react-build.yml'
+      - 'react-and-spring-data-rest/webpack.config.js'
+      - 'deployments/react-app/*'
+
+variables:
+   ACRLoginServer: ""
+   ACRAdminUser: ""
+   ACRAdminPassword: ""
+   Image: "react-app"
+   ImageTag: "$(Build.SourceBranchName)-$(Build.BuildNumber)" 
+   ImageName: "$(Image):$(ImageTag)" 
+   IsMasterOrRelease: ${{ and(ne(variables['Build.Reason'], 'PullRequest'),or(eq(variables['Build.SourceBranchName'], 'master'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))) }}
+   ${{ if eq(variables['IsMasterOrRelease'], 'true') }}: 
+    file: "../../deployments/react-app/deployment.production.yaml" 
+   ${{ else }}:
+    file: "../../deployments/react-app/deployment.development.yaml" 
+     
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: replacetokens@5
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)'
+    targetFiles: '**/pom.xml'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+
+- task: Bash@3
+  displayName: Docker Login&Push
+  inputs:
+    targetType: 'inline'
+    script: |
+      docker login $(ACRLoginServer) -u  $(ACRAdminUser) -p $(ACRAdminPassword)
+      cd $(System.DefaultWorkingDirectory)/react-and-spring-data-rest
+      docker build -t $(ACRLoginServer)/$(ImageName) .
+      docker push $(ACRLoginServer)/$(ImageName)
+    
+- task: replacetokens@5
+  displayName: Replace Deployment Files
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)/deployments/react-app'
+    targetFiles: '*.yaml'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: replacetokens@5
+  displayName: Replace Deployment Files
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+    targetFiles: '*.tf'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: replacetokens@5
+  displayName: Replace Deployment Files
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)/terraform/main'
+    targetFiles: 'deployment.tf'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: TerraformInstaller@0
+  displayName: Terraform Install
+  inputs:
+    terraformVersion: '1.0.3'
+- task: TerraformTaskV2@2
+  displayName: Terraform Init 
+  inputs:
+    provider: 'azurerm'
+    command: 'init'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/main/'
+    backendServiceArm: ''
+    backendAzureRmResourceGroupName: ''
+    backendAzureRmStorageAccountName: ''
+    backendAzureRmContainerName: ''
+    backendAzureRmKey: ''
+- task: TerraformTaskV2@2
+  displayName: Terraform Validate
+  inputs:
+    provider: 'azurerm'
+    command: 'validate'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/main/'
+- task: TerraformTaskV2@2
+  displayName: Terraform Plan
+  inputs:
+    provider: 'azurerm'
+    command: 'plan'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/main/'
+    environmentServiceNameAzureRM: ''
+    ${{ if eq(variables['IsMasterOrRelease'], 'true') }}: 
+      commandOptions: '-input=false -var-file="../production/variables.tfvars"'
+    ${{ else }}:
+      commandOptions: '-input=false -var-file="../development/variables.tfvars"'
+- task: TerraformTaskV2@2
+  displayName: Terraform Apply
+  name: terraformApply
+  inputs:
+    provider: 'azurerm'
+    command: 'apply'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/main/'
+    environmentServiceNameAzureRM: ''
+    ${{ if eq(variables['IsMasterOrRelease'], 'true') }}: 
+      commandOptions: '-input=false -var-file="../production/variables.tfvars"'
+    ${{ else }}:
+      commandOptions: '-input=false -var-file="../development/variables.tfvars"'
+- task: PublishBuildArtifacts@1
+  displayName: Publish build artifacts
+  inputs:
+    PathtoPublish: '$(System.DefaultWorkingDirectory)/deployments/react-app/'
+    ArtifactName: 'drop'
+    publishLocation: 'Container'

@@ -1,0 +1,126 @@
+name: $(BuildID)
+
+trigger:
+  branches:
+    include:
+    - 'feature/*'
+    - 'fix/*'
+    - 'hotfix/*'
+    - 'master'
+    - 'release/*'
+    - 'initial/*'
+  paths:
+    include:
+      - 'react-and-spring-data-rest/mvnw.cmd'
+      - 'react-and-spring-data-rest/mvnw'
+      - 'react-and-spring-data-rest/.mvn'
+      - 'react-and-spring-data-rest/src/main/java/*'
+      - 'azure-pipelines-spring-build.yml'
+      - 'react-and-spring-data-rest/pom.xml'
+      - 'deployments/spring-app/*'
+
+variables:
+   ACRLoginServer: ""
+   ACRAdminUser: ""
+   ACRAdminPassword: ""
+   Image: "spring-app"
+   ImageTag: "$(Build.SourceBranchName)-$(Build.BuildNumber)" 
+   ImageName: "$(Image):$(ImageTag)" 
+   IsMasterOrRelease: ${{ and(ne(variables['Build.Reason'], 'PullRequest'),or(eq(variables['Build.SourceBranchName'], 'master'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))) }}
+   ${{ if eq(variables['IsMasterOrRelease'], 'true') }}: 
+    file: "../../deployments/spring-app/deployment.production.yaml" 
+   ${{ else }}:
+    file: "../../deployments/spring-app/deployment.development.yaml" 
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: replacetokens@5
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)'
+    targetFiles: '**/pom.xml'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: Maven@3
+  inputs:
+    mavenPomFile: 'react-and-spring-data-rest/pom.xml'
+    mavenOptions: '-Xmx3072m'
+    javaHomeOption: 'JDKVersion'
+    jdkArchitectureOption: 'x64'
+    publishJUnitResults: true
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'
+    goals: 'package'
+- task: Maven@3
+  displayName: Build Docker image
+  inputs:
+    mavenPomFile: 'react-and-spring-data-rest/pom.xml'
+    goals: 'spring-boot:build-image'
+    publishJUnitResults: false
+- task: Bash@3
+  displayName: Docker Login&Push
+  inputs:
+    targetType: 'inline'
+    script: |
+      docker login $(ACRLoginServer) -u  $(ACRAdminUser) -p $(ACRAdminPassword)
+      
+      docker push $(ACRLoginServer)/$(ImageName)
+- task: replacetokens@5
+  displayName: Replace Deployment Files
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)/deployments/spring-app'
+    targetFiles: '*.yaml'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: replacetokens@5
+  displayName: Replace Deployment Files
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)/terraform/main'
+    targetFiles: 'deployment.tf'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: replacetokens@5
+  displayName: Replace Deployment Files
+  inputs:
+    rootDirectory: '$(System.DefaultWorkingDirectory)/terraform'
+    targetFiles: '*.tf'
+    encoding: 'auto'
+    tokenPattern: 'default'
+    writeBOM: true
+    actionOnMissing: 'warn'
+    keepToken: false
+    actionOnNoFiles: 'continue'
+    enableTransforms: false
+    enableRecursion: false
+    useLegacyPattern: false
+    enableTelemetry: true
+- task: PublishBuildArtifacts@1
+  displayName: Publish build artifacts
+  inputs:
+    PathtoPublish: '$(Build.SourcesDirectory)'
+    ArtifactName: 'drop'
+    publishLocation: 'Container'
